@@ -5,6 +5,7 @@ usage: ruby #{$0} file [output]
 \toutput\t(optional) directory to save extracted files to. Default value is ./jpeg-files"
   exit 1
 end
+READ_BUFFER_SIZE = 1024 * 1024
 file_path = ARGV[0]
 
 file = File.open(file_path)
@@ -55,7 +56,7 @@ end
 
 class JpegExtractor
   @files_extracted = 0
-  attr_accessor :start_offset, :end_offset, :has_marker, :has_SOI, :has_SOS
+  attr_accessor :start_offset, :end_offset, :has_marker, :has_SOI, :has_SOS, :has_header, :header_size_one, :header_size_two, :bytes_to_skip
   attr_reader :files_extracted, :is_extracting
   @source = nil
   @target = nil
@@ -63,9 +64,15 @@ class JpegExtractor
     @source = source
     @target = target
     @files_extracted = 0
+    @has_header = false
+    @bytes_to_skip = 0
   end
   def length
     @end_offset - @start_offset
+  end
+  def skip_byte
+    @bytes_to_skip -= 1
+    reset_header if @bytes_to_skip == 0
   end
   def extract
     @extracting = true
@@ -81,8 +88,13 @@ class JpegExtractor
     @has_SOI = false
     @has_SOS = false
   end
+  def reset_header
+    @has_header = false
+    @header_size_one = nil
+    @header_size_two = nil
+  end
   def status
-    "#{has_marker ? 'Marker' : ''} #{has_SOI ? 'SOI' : ''} #{has_SOS ? 'SOS' : ''} #{is_extracting ? 'Extracting' : ''}"
+    "#{has_marker ? 'Marker' : ''} #{has_SOI ? 'SOI' : ''} #{has_SOS ? 'SOS' : ''}"
   end
 end
 
@@ -96,66 +108,83 @@ end
 byte = Byte.new(-1)
 jpeg = JpegExtractor.new(file_path, output_dir)
 start_time = Time.now
+file_pos = 0
 
 begin
-  while read_buffer = file.read(1)
-    should_update_status = false
-    byte.value = read_buffer.unpack('C')[0]
-    if jpeg.has_marker
-      if jpeg.has_SOI
-        if byte.is_header
-          x = file.read(2).unpack('CC')
-          length = x[0] << 8 | x[1]
-          file.seek(length-2, IO::SEEK_CUR)
-        elsif byte.is_SOS
-          jpeg.has_SOS = true
-        elsif jpeg.has_SOS
-          if byte.is_EOI
-            jpeg.end_offset = file.pos
-            if jpeg.length > 0
-              jpeg.extract
-              should_update_status = true
-            else
-              puts "ERROR, cannot extract zero or negative size: SOF=#{jpeg.start_offset} EOF=#{jpeg.end_offset}"
+  while read_buffer = file.read(READ_BUFFER_SIZE)
+    read_buffer.each_byte do |buffered_byte|
+      file_pos += 1
+      should_update_status = false
+      byte.value = buffered_byte
+      if jpeg.bytes_to_skip > 0
+        jpeg.skip_byte
+      elsif jpeg.has_header
+        if jpeg.header_size_one != nil
+          if jpeg.header_size_two != nil
+            jpeg.bytes_to_skip = (jpeg.header_size_one << 8 | jpeg.header_size_two) - 3 # minus 3 because 2 bytes are the size, 1 more because we've already read it.
+          else
+            jpeg.header_size_two = byte.value
+          end
+        else
+          jpeg.header_size_one = byte.value
+        end
+      elsif jpeg.has_marker
+        if jpeg.has_SOI
+          if byte.is_header
+            jpeg.has_header = true
+          elsif byte.is_SOS
+            jpeg.has_SOS = true
+          elsif jpeg.has_SOS
+            if byte.is_EOI
+              jpeg.end_offset = file_pos
+              if jpeg.length > 0
+                jpeg.extract
+                should_update_status = true
+              else
+                puts "ERROR, cannot extract zero or negative size: SOF=#{jpeg.start_offset} EOF=#{jpeg.end_offset}"
+              end
+              jpeg.reset
+            elsif byte.is_SOI # duplicate SOI
+              jpeg.start_offset = file_pos - 2
+            elsif byte.is_NULL || byte.is_scan_reset
+              # escaped FF byte or reset flag, ignore this
+            else # unexpected byte
+              jpeg.reset
             end
-            jpeg.reset
-          elsif byte.is_SOI # duplicate SOI
-            jpeg.start_offset = file.pos - 2
-          elsif byte.is_NULL || byte.is_scan_reset
-            # esacped FF byte or reset flag, ignore this
-          else # unexpected byte
+          elsif byte.is_SOI
+            # duplicate SOI, false positive or partial jpeg, abandon current search and start over
+            jpeg.start_offset = file_pos - 2
+          else
+            # unexpected byte
             jpeg.reset
           end
         elsif byte.is_SOI
-          # duplicate SOI, false positive or partial jpeg, abandon current search and start over
-          jpeg.start_offset = file.pos - 2
+          jpeg.has_SOI = true
+          jpeg.start_offset = file_pos - 2
         else
-          # unexpected byte
           jpeg.reset
         end
-      elsif byte.is_SOI
-        jpeg.has_SOI = true
-        jpeg.start_offset = file.pos - 2
+        jpeg.has_marker = false
+      elsif byte.is_marker
+        jpeg.has_marker = true
+      elsif jpeg.has_SOS
+        # do nothing
       else
         jpeg.reset
       end
-      jpeg.has_marker = false
-    elsif byte.is_marker
-      jpeg.has_marker = true
-    elsif jpeg.has_SOS
-      # do nothing
-    else
-      jpeg.reset
-    end
-    # don't slow down script by printing status on every byte
-    if should_update_status || file.pos == 1 || file.pos % 10240 == 0 || file.pos == file_size
-      et = (Time.now - start_time)
-      speed = (file.pos / et)
-      rt = (file_size - file.pos) / speed
-      print "\r%.2f%% %d files -%s +%s %.2f kB/s" % 
-          [((file.pos.to_f/file_size)*100).round(2), jpeg.files_extracted, time_string(et), time_string(rt), (speed / 1024).to_s]
+      # don't slow down script by printing status on every byte
+      if should_update_status || file_pos == 1 || file_pos % 10240 == 0 || file_pos == file_size
+        et = (Time.now - start_time)
+        speed = (file_pos / et)
+        rt = (file_size - file_pos) / speed
+        print "\r%.2f%% %d files -%s +%s %.2f kB/s" % 
+            [((file_pos.to_f/file_size)*100).round(2), jpeg.files_extracted, time_string(et), time_string(rt), (speed / 1024).to_s]
+      end
     end
   end
+rescue Interrupt
+  puts "\nCanceled"
+  exit 1
 rescue => error
   puts error.message
   puts error.backtrace.join("\n")
