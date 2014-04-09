@@ -23,13 +23,11 @@ Or if you want to specify the output directory instead of the default 'jpeg-file
 
 `ruby extract-jpeg.rb /home/mjb2k/sdcard.img /home/mjb2k/recovered-pics`
 
-(**Broken**) If you do not have enough free space to make an image of the device, say if you are scanning a large hard drive, you can scan the device directly.
+If you do not have enough free space to make an image of the device, say if you are scanning a large hard drive, you can scan the device directly.
 
 `sudo ruby extract-jpeg.rb /dev/sdb`
 
 sudo is required for direct device access. **Known Issue**, percent complete and estimated time remaining is not reported correctly when scanning a device.
-
-Scanning a device directly doesn't seem to actually work, I'm not sure why and have a hard time caring. I'll likely get around to making it work sometime because you just can't always make an image like you should.
 
 This should also work for extracting jpeg images embedded in other file types such as PDF. This is untested specifically, but I did notice that when extracting jpegs I was getting images known to originate form a PDF file.
 
