@@ -5,16 +5,17 @@ Project named with the intention of adding extraction for other file types.
 extract jpeg file from disc image, block device or any other file.
 
 requirements: ruby 1.9+
+Tested on Mac and Linux, examples are from Linux.
 
 usage: `ruby extract-jpeg.rb file [output]`
 
 This was originaly developed to recover deleted pictures from an SD card. In such a case, it is best to make an image of the device as soon as possible. Any further use of the volume after deletion will increase chances of data being overwritten, in which case, it's just gone.
 
-On Linux, BSD or Mac, *dd* works well for taking an image of a drive. There is plenty material on the internet to learn all about *dd*, (read the manual first before using *dd*!) but I'll give a quick example here.
+On Linux, BSD or Mac, *dd* works well for taking an image of a drive. There is plenty material on the internet to learn all about *dd*, (read the manual before using *dd*!) but I'll give a quick example here.
 
 `dd if=/dev/sdb of=/home/mjb2k/sdcard.img bs=1M`
 
-Notice my input is sdb, not sdb1. I want to make an image of the entire device, not a partition. (This may not always be the case, especially with partioned hard drives) The output is simply the file I want to write the image to.
+Notice my input (if) is sdb, not sdb1. I want to make an image of the entire device, not a partition. (This may not always be the case, especially with partioned hard drives) The output (of) is the file I want to write the image to.
 Remember we are making an image of the entire device; the output file will be the disc's total capacity, not the used space. I give a block size (bs) of 1 MB becase the default size of 512 bytes is usually a bit slow.
 
 You can now scan the disc image: `ruby extract-jpeg.rb /home/mjb2k/sdcard.img`
