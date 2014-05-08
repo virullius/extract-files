@@ -15,6 +15,7 @@ output_dir = output_dir.sub(/(.+)\/$/,'\1')
 Dir.mkdir("#{output_dir}") if not Dir.exists?("#{output_dir}")
 
 class JpegExtractor
+  RANDOM = Random.new
   HEADERS = "\xC0\xC2\xC4\xDB\xE0\xE1\xE2\xE3\xE4\xE5\xE6\xE7\xE8\xE9\xFE\xDD".unpack('C*')
   RSTn = "\xD0\xD1\xD2\xD3\xD4\xD5\xD6\xD7".unpack('C*')
   MARKER = 0xFF
@@ -27,7 +28,6 @@ class JpegExtractor
   def initialize(source, target)
     @source = source
     @target = target
-    @pos = 0
     @bytes_to_skip = 0
     @byte_buffer = "".force_encoding("ASCII-8BIT")
     @files_extracted = 0
@@ -44,7 +44,8 @@ class JpegExtractor
   end
   def extract
     @extracting = true
-    IO.write("#{@target}/#{@pos - @byte_buffer.length}.jpg", @byte_buffer)
+    @file_name = RANDOM.bytes(16).unpack('H*')[0]
+    IO.write("#{@target}/#{@file_name}.jpg", @byte_buffer)
     @extracting = false
     @files_extracted += 1
     reset
@@ -60,8 +61,12 @@ class JpegExtractor
     @header_size_one = nil
     @header_size_two = nil
   end
+  def did_extract
+    return @file_name if @file_name
+    return false
+  end
   def <<(byte)
-    @pos += 1
+    @file_name = nil
     if @bytes_to_skip > 0
       skip_byte
       @byte_buffer << byte
@@ -144,7 +149,7 @@ begin
     read_buffer.each_byte do |buffered_byte|
       file_pos += 1
       jpeg << buffered_byte
-      # don't slow down script by printing status on every byte
+      # printing status is expensive, do so sparingly
       if file_pos == 1 || file_pos % 1024 == 0 || file_pos == file_size
         et = (Time.now - start_time)
         speed = (file_pos / et)
