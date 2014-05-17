@@ -134,30 +134,49 @@ class JpegExtractor
 end
 
 def time_string(seconds)
+  return "Infinity" if seconds == Float::INFINITY
   h = (seconds / 3600).to_i
   m = ((seconds - (h * 3600)) / 60).to_i
   s = (seconds - (h * 3600) - (m * 60)).to_i
   "%02d:%02d:%02d" % [h,m,s]
 end
 
-jpeg = JpegExtractor.new(file_path, output_dir)
 start_time = Time.now
-file_pos = 0
+total_bytes = 0
 
 begin
-  while read_buffer = file.read(READ_BUFFER_SIZE)
-    read_buffer.each_byte do |buffered_byte|
-      file_pos += 1
-      jpeg << buffered_byte
-      # printing status is expensive, do so sparingly
-      if file_pos == 1 || file_pos % 1024 == 0 || file_pos == file_size
-        et = (Time.now - start_time)
-        speed = (file_pos / et)
-        rt = (file_size - file_pos) / speed
-        print "\r%.2f%% %d files -%s +%s %.2f kB/s" % 
-            [((file_pos.to_f/file_size)*100).round(2), jpeg.files_extracted, time_string(et), time_string(rt), (speed / 1024).to_s]
+  worker_reader, parent_writer = IO.pipe
+  worker_pid = fork do
+    jpeg = JpegExtractor.new(file_path, output_dir)
+    worker_reader.close
+    my_bytes = 0
+    Signal.trap('USR1') do
+      parent_writer.puts my_bytes
+      parent_writer.puts jpeg.files_extracted
+    end
+    while read_buffer = file.read(READ_BUFFER_SIZE)
+      read_buffer.each_byte do |buffered_byte|
+        my_bytes += 1
+        jpeg << buffered_byte
       end
     end
+  end
+  parent_writer.close
+  worker_files_extracted = 0
+  worker_bytes = 0
+  while Process.wait(worker_pid, Process::WNOHANG) == nil
+    sleep 1
+    Process.kill('USR1', worker_pid)
+    b = worker_reader.gets
+    f = worker_reader.gets
+    worker_files_extracted = f.to_i if f != nil
+    worker_bytes = b.to_i if b != nil
+    total_bytes = worker_bytes
+    et = (Time.now - start_time)
+    speed = (total_bytes / et)
+    rt = (file_size - total_bytes) / speed
+    print "\r%.2f%% %d files -%s +%s %.2f kB/s" %
+        [((total_bytes.to_f/file_size)*100).round(2), worker_files_extracted, time_string(et), time_string(rt), (speed / 1024).to_s]
   end
 rescue Interrupt
   puts "\nCanceled"
