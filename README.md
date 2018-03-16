@@ -1,3 +1,8 @@
+# Abandoned
+
+While it served the immediate need and was successful in recovering jpeg photos, this is cleary a mess and not worth further work.  
+
+
 # extract-files
 Project named with the intention of adding extraction for other file types.
 
